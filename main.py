@@ -8,6 +8,12 @@ from pathlib import Path
 import torch.optim as optim
 import json
 import shutil
+import re
+
+
+API_NAME = "model_local_training"
+SAMPLE_TRAIN_DATASET_DIR = Path("./mnist_samples")
+TRAIN_EPOCHS = 10
 
 
 class SimpleNN(nn.Module):
@@ -23,138 +29,155 @@ class SimpleNN(nn.Module):
         return x
 
 
-def look_for_datasets(dataset_path: Path):
-    if not dataset_path.is_dir():
-        os.makedirs(str(dataset_path))
+def get_api_private_data(client: Client, api_name: str = API_NAME) -> Path:
+    """
+    Returns the private data directory of the app
+    """
+    return client.workspace.data_dir / "private" / api_name
 
-    dataset_path_files = [f for f in os.listdir(str(dataset_path)) if f.endswith(".pt")]
-    return dataset_path_files
+
+def get_running_folder(client: Client) -> Path:
+    """
+    Returns the running folder of the app
+    """
+    return client.api_data(API_NAME) / "running"
 
 
-def train_model(datasite_path: Path, dataset_path: Path, public_folder_path: Path):
-    dataset_path_files = look_for_datasets(dataset_path=dataset_path)
+def create_private_data_folder(client: Client) -> None:
+    """
+    Create the private data directory for the api
+    where the private test data will be stored according 
+    to the following structure:
+    ```
+    workspace
+    ├── apis
+    ├── datasites
+    ├── logs
+    ├── plugins
+    ├── private
+        ├── model_local_training
+        │   └── mnist_label_0.pt  # need to be manually put here by the participant
+        │   └── mnist_label_1.pt  # need to be manually put here by the participant
+        ...
+    ```
+    """
+    app_pvt_dir = get_api_private_data(client, API_NAME)
+    app_pvt_dir.mkdir(parents=True, exist_ok=True)
 
-    if len(dataset_path_files) == 0:
-        print(f"No dataset found in {dataset_path} skipping training.")
-        return
 
-    model = SimpleNN()  # Initialize train_model
+def init_model_local_training_api(client: Client) -> None:
+    """
+    Creates the `model_local_training` folder in the `api_data` folder
+    with the following structure:
+    ```
+    datasites
+    ├── client_email
+    │   └── api_data
+            └── model_local_training
+                    └── running
+    ```
+    """
+    create_private_data_folder(client)
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.1)
 
-    all_datasets = []
-    for dataset_file in dataset_path_files:
+def look_for_datasets(client: Client) -> list:
+    """
+    Look for the datasets in the `workspace/private` folder
+    """
+    prv_dataset_dir: Path = get_api_private_data(client, API_NAME)
 
-        # load the saved mnist subset
-        images, labels = torch.load(str(dataset_path) + "/" + dataset_file)
+    dataset_path_files = prv_dataset_dir.glob("mnist_label_*.pt")
+    return [Path(f) for f in dataset_path_files]
 
-        # create a tensordataset
-        dataset = TensorDataset(images, labels)
 
-        all_datasets.append(dataset)
+def get_public_folder(client: Client) -> Path:
+    """
+    Returns the public folder of the app
+    """
+    return client.datasite_path / "public"
 
-    combined_dataset = ConcatDataset(all_datasets)
 
-    # create a dataloader for the dataset
-    train_loader = DataLoader(combined_dataset, batch_size=64, shuffle=True)
+def get_model_file(path: Path) -> list[Path]:
+    model_files = []
+    entries = os.listdir(path)
+    pattern = r"^pretrained_mnist_label_[0-9]\.pt$"
 
-    # Open log file in append mode
-    output_logs_path = Path(public_folder_path / "training.log")
-    log_file = open(str(output_logs_path), "a")
+    for entry in entries:
+        if re.match(pattern, entry):
+            model_files.append(Path(entry))
 
-    # Log training start
-    start_msg = f"[{datetime.now().isoformat()}] Starting training...\n"
-    log_file.write(start_msg)
-    log_file.flush()
+    return model_files
+
+
+def train_model(dataset_file: Path, output_model_path: Path) -> None:
+    start_msg = f"[{datetime.now().isoformat()}] Starting training on {dataset_file.name}...\n"
+    print(start_msg)
+
+    images, labels = torch.load(dataset_file)
+    dataset = TensorDataset(images, labels)
+    train_loader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+    # model, loss func and optimizer
+    model = SimpleNN()
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=0.01)
 
     # training loop
-    for epoch in range(1000):
+    for epoch in range(TRAIN_EPOCHS):
         running_loss = 0
         for images, labels in train_loader:
             optimizer.zero_grad()
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            loss = loss_fn(outputs, labels)
             loss.backward()
             optimizer.step()
-
             # accumulate loss
             running_loss += loss.item()
 
         # Calculate average loss for the epoch
         avg_loss = running_loss / len(train_loader)
         log_msg = f"[{datetime.now().isoformat()}] Epoch {epoch + 1:04d}: Loss = {avg_loss:.6f}\n"
-        log_file.write(log_msg)
-        log_file.flush()  # Force write to disk
+        print(log_msg)
 
-    # Serialize the model
-    output_model_path = Path(public_folder_path / "model.pth")
-    torch.save(model.state_dict(), str(output_model_path))
+    torch.save(model.state_dict(), output_model_path)
+    print(f"Model saved at {output_model_path}")
 
-    output_training_json_path = Path(public_folder_path / "model_training.json")
-    with open(str(output_training_json_path), "w") as training_info_file:
-        timestamp = datetime.now().isoformat()
-        json.dump({"last_train": timestamp}, training_info_file)
-
-    # Log completion
-    final_msg = f"[{datetime.now().isoformat()}] Training completed. Final loss: {avg_loss:.6f}\n"
-    log_file.write(final_msg)
-    log_file.flush()
-    log_file.close()
+    return None
 
 
-def time_to_train(datasite_path: Path):
-    last_round_file_path: Path = (
-        Path(datasite_path) / "app_pipelines" / "fl_app" / "last_round.json"
-    )
-    fl_pipeline_path: Path = last_round_file_path.parent
+def train_models(client: Client, dataset_paths: list[Path]):
+    # handling edge cases before training
+    if len(dataset_paths) == 0:
+        print("No dataset found in the private folder. Skipping training.")
+        return
+    
+    public_folder: Path = get_public_folder(client)
+    output_model_paths: list[Path] = get_model_file(public_folder)
+    if len(output_model_paths) == len(dataset_paths):
+        print(f"All trained models already exists. Skipping training.")
+        return
 
-    if not fl_pipeline_path.is_dir():
-        os.makedirs(str(fl_pipeline_path))
-        copy_folder_contents("./mnist_samples", str(datasite_path / "private/"))
-        return True
-
-    with open(str(last_round_file_path), "r") as last_round_file:
-        last_round_info = json.load(last_round_file)
-
-        last_trained_time = datetime.fromisoformat(last_round_info["last_train"])
-        time_now = datetime.now()
-
-        if (time_now - last_trained_time) >= timedelta(seconds=10):
-            return True
-
-    return False
+    for dataset_file in dataset_paths:
+        output_model_name = "pretrained_mnist_label_" + dataset_file.name.split("_")[2].split(".")[0] + ".pt"
+        train_model(dataset_file, public_folder / output_model_name)
+    
+    # print completion message
+    final_msg = f"[{datetime.now().isoformat()}] Training on {len(dataset_paths)} datasets completed.\n"
+    print(final_msg)
 
 
-def save_training_timestamp(datasite_path: Path) -> None:
-    last_round_file_path: Path = (
-        Path(datasite_path) / "app_pipelines" / "fl_app" / "last_round.json"
-    )
-    with open(str(last_round_file_path), "w") as last_round_file:
-        timestamp = datetime.now().isoformat()
-        json.dump({"last_train": timestamp}, last_round_file)
-
-
-def copy_folder_contents(src_folder, dest_folder):
-    if not os.path.exists(dest_folder):
-        os.makedirs(dest_folder)
-    for item in os.listdir(src_folder):
-        src_path = os.path.join(src_folder, item)
-        dest_path = os.path.join(dest_folder, item)
-        if not os.path.isdir(src_path):
-            shutil.copy2(src_path, dest_path)
+def advance_model_local_training(client: Client) -> None:
+    """
+    Look for datasets in the private folder, train the model and put
+    the trained model in `api_data/model_local_training/running` folder
+    """
+    dataset_files: list[Path] = look_for_datasets(client)
+    train_models(client, dataset_files)
 
 
 if __name__ == "__main__":
     client = Client.load()
-    if not time_to_train(client.datasite_path):
-        print("It's not time for a new training routine. skipping it for now.")
-        exit()
 
-    dataset_path = Path(client.datasite_path / "private" / "datasets")
-    public_folder = Path(client.datasite_path / "public")
-    output_model_path = Path(public_folder / "model.pth")
-    output_model_info = Path(public_folder / "model_training.json")
-    os.makedirs(dataset_path, exist_ok=True)
-    train_model(client.datasite_path, dataset_path, public_folder)
-    save_training_timestamp(client.datasite_path)
+    init_model_local_training_api(client)
+
+    advance_model_local_training(client)
