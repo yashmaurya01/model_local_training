@@ -95,16 +95,8 @@ def get_public_folder(client: Client) -> Path:
     return client.datasite_path / "public"
 
 
-def get_model_file(path: Path) -> list[Path]:
-    model_files = []
-    entries = os.listdir(path)
-    pattern = r"^pretrained_mnist_label_[0-9]\.pt$"
-
-    for entry in entries:
-        if re.match(pattern, entry):
-            model_files.append(Path(entry))
-
-    return model_files
+def get_model_files(path: Path) -> list[Path]:
+    return list(path.glob("trained_mnist_label_*.pt"))
 
 
 def train_model(dataset_file: Path, output_model_path: Path) -> None:
@@ -150,13 +142,13 @@ def train_models(client: Client, dataset_paths: list[Path]):
         return
     
     public_folder: Path = get_public_folder(client)
-    output_model_paths: list[Path] = get_model_file(public_folder)
+    output_model_paths: list[Path] = get_model_files(public_folder)
     if len(output_model_paths) == len(dataset_paths):
         print(f"All trained models already exists. Skipping training.")
         return
 
     for dataset_file in dataset_paths:
-        output_model_name = "pretrained_mnist_label_" + dataset_file.name.split("_")[2].split(".")[0] + ".pt"
+        output_model_name = "trained_mnist_label_" + dataset_file.name.split("_")[2].split(".")[0] + ".pt"
         train_model(dataset_file, public_folder / output_model_name)
     
     # print completion message
