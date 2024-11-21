@@ -1,13 +1,11 @@
 import torch
 import torch.nn as nn
-from datetime import datetime, timedelta
+from datetime import datetime
 from syftbox.lib import Client
-from torch.utils.data import ConcatDataset, DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset
 import os
 from pathlib import Path
 import torch.optim as optim
-import json
-import shutil
 import re
 
 
