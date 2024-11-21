@@ -166,18 +166,14 @@ def train_models(client: Client, dataset_paths: list[Path]):
     print(final_msg)
 
 
-def advance_model_local_training(client: Client) -> None:
-    """
-    Look for datasets in the private folder, train the model and put
-    the trained model in `api_data/model_local_training/running` folder
-    """
-    dataset_files: list[Path] = look_for_datasets(client)
-    train_models(client, dataset_files)
-
-
 if __name__ == "__main__":
     client = Client.load()
 
+    # Step 1: Initialize the model_local_training API
     init_model_local_training_api(client)
 
-    advance_model_local_training(client)
+    # Step 2: Look for datasets in the private folder
+    dataset_files: list[Path] = look_for_datasets(client)
+
+    # Step 3: Train the models
+    train_models(client, dataset_files)
