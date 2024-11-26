@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 import torch.optim as optim
 import re
+from opacus import PrivacyEngine
 
 
 API_NAME = "model_local_training"
 SAMPLE_TRAIN_DATASET_DIR = Path("./mnist_samples")
 TRAIN_EPOCHS = 10
+DELTA = 1e-5
 
 
 class SimpleNN(nn.Module):
@@ -92,13 +94,21 @@ def train_model(dataset_file: Path, output_model_path: Path) -> None:
     images, labels = torch.load(dataset_file)
     dataset = TensorDataset(images, labels)
     train_loader = DataLoader(dataset, batch_size=64, shuffle=True)
-
+    
     # model, loss func and optimizer
     model = SimpleNN()
     loss_fn = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.01)
-
     # training loop
+    privacy_engine = PrivacyEngine()
+    model, optimizer, train_loader = privacy_engine.make_private(
+        module=model,
+        optimizer=optimizer,
+        data_loader=train_loader,
+        noise_multiplier=1.1,
+        max_grad_norm=1.0,
+    )
+
     for epoch in range(TRAIN_EPOCHS):
         running_loss = 0
         for images, labels in train_loader:
@@ -112,7 +122,8 @@ def train_model(dataset_file: Path, output_model_path: Path) -> None:
 
         # Calculate average loss for the epoch
         avg_loss = running_loss / len(train_loader)
-        log_msg = f"[{datetime.now().isoformat()}] Epoch {epoch + 1:04d}: Loss = {avg_loss:.6f}\n"
+        epsilon = privacy_engine.accountant.get_epsilon(delta=DELTA)
+        log_msg = f"[{datetime.now().isoformat()}] Epoch {epoch + 1:04d}: Loss = {avg_loss:.6f} | (ε = {epsilon:.2f}, δ = {DELTA})\n"
         print(log_msg)
 
     torch.save(model.state_dict(), output_model_path)
