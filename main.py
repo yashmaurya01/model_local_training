@@ -34,13 +34,6 @@ def get_api_private_data(client: Client, api_name: str = API_NAME) -> Path:
     return client.workspace.data_dir / "private" / api_name
 
 
-def get_running_folder(client: Client) -> Path:
-    """
-    Returns the running folder of the app
-    """
-    return client.api_data(API_NAME) / "running"
-
-
 def create_private_data_folder(client: Client) -> None:
     """
     Create the private data directory for the api
@@ -65,15 +58,8 @@ def create_private_data_folder(client: Client) -> None:
 
 def init_model_local_training_api(client: Client) -> None:
     """
-    Creates the `model_local_training` folder in the `api_data` folder
-    with the following structure:
-    ```
-    datasites
-    ├── client_email
-    │   └── api_data
-            └── model_local_training
-                    └── running
-    ```
+    Intialize the model_local_training API. Only need to 
+    create the private data folder to store the datasets.
     """
     create_private_data_folder(client)
 
